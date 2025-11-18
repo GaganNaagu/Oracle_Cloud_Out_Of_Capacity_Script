@@ -7,8 +7,8 @@ A complete guide to deploy a Python bot that helps monitor and respond to Oracle
 ## Downloading Script
 
 ```bash
-   bash <(curl -s https://raw.githubusercontent.com/GaganNaagu/Oracle_Cloud_Out_Of_Capacity_Script/refs/heads/main/download_script.sh)
-   ```
+bash <(curl -s https://raw.githubusercontent.com/GaganNaagu/Oracle_Cloud_Out_Of_Capacity_Script/refs/heads/main/download_script.sh)
+```
 
 ---
 
@@ -33,15 +33,15 @@ A complete guide to deploy a Python bot that helps monitor and respond to Oracle
 ## Runing in Docker
 
 ```bash
-   docker run --name oci-script -d -v $(pwd):/app --restart unless-stopped --log-opt max-size=10k --log-opt max-file=1 GaganNaagu/oci-out-of-capacity-script
-   ```
+docker run --name oci-script -d -v $(pwd):/app --restart unless-stopped --log-opt max-size=10k --log-opt max-file=1 gagannaagu/oci-out-of-capacity-script
+```
 
 ---
 
 ## See Logs
 
 ```bash
-   docker logs oci-script
-   ```
+docker logs oci-script
+```
 
 ---
