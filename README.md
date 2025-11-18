@@ -33,7 +33,7 @@ bash <(curl -s https://raw.githubusercontent.com/GaganNaagu/Oracle_Cloud_Out_Of_
 ## Runing in Docker
 
 ```bash
-docker run --name oci-script -d -v $(pwd):/app --restart unless-stopped --log-opt max-size=10k --log-opt max-file=1 GaganNaagu/oci-out-of-capacity-script
+docker run --name oci-script -d -v $(pwd):/app --restart unless-stopped --log-opt max-size=10k --log-opt max-file=1 gagannaagu/oci-out-of-capacity-script
 ```
 
 ---
