@@ -5,7 +5,7 @@
 # ===========================
 
 # Base URL
-BASE_URL="https://raw.githubusercontent.com/praveenkarunarathne/Oracle_Cloud_Out_Of_Capacity_Script/refs/heads/main"
+BASE_URL="https://raw.githubusercontent.com/GaganNaagu/Oracle_Cloud_Out_Of_Capacity_Script/refs/heads/main"
 
 # Ask user for version
 echo "Select the version to download:"
