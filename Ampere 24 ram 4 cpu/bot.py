@@ -2,8 +2,10 @@ import oci
 import logging
 import time
 import sys
-import telebot
+import discord
+from discord.ext import commands
 import datetime
+import pytz
 from dotenv import load_dotenv
 import os
 
@@ -22,7 +24,7 @@ boot_volume_size_in_gbs = os.getenv("BOOT_VOLUME_SIZE_IN_GBS")
 boot_volume_id = os.getenv("BOOT_VOLUME_ID")
 
 bot_token = os.getenv("BOT_TOKEN")
-uid = os.getenv("UID")
+channel_id = int(os.getenv("CHANNEL_ID"))  # Discord channel ID
 
 ocpus = int(os.getenv("OCPUS"))
 memory_in_gbs = int(os.getenv("MEMORY_IN_GBS"))
@@ -32,9 +34,7 @@ minimum_time_interval = int(os.getenv("MINIMUM_TIME_INTERVAL"))
 
 LOG_FORMAT = "[%(levelname)s] %(asctime)s - %(message)s"
 logging.basicConfig(
-    level=logging.INFO,
-    format=LOG_FORMAT,
-    handlers=[logging.StreamHandler(sys.stdout)]
+    level=logging.INFO, format=LOG_FORMAT, handlers=[logging.StreamHandler(sys.stdout)]
 )
 
 logging.info("#####################################################")
@@ -42,9 +42,14 @@ logging.info("Script to spawn VM.Standard.A1.Flex instance")
 
 # ============================ INITIAL SETUP ============================ #
 
-if not bot_token == "xxxx" :
-    bot = telebot.TeleBot(bot_token)
-message = f"Start spawning instance VM.Standard.A1.Flex - {ocpus} ocpus - {memory_in_gbs} GB"
+# Discord bot setup
+intents = discord.Intents.default()
+intents.message_content = True
+bot = discord.Client(intents=intents)
+
+message = (
+    f"Start spawning instance VM.Standard.A1.Flex - {ocpus} ocpus - {memory_in_gbs} GB"
+)
 logging.info(message)
 
 logging.info("Loading OCI config")
@@ -69,7 +74,9 @@ if imageId != "xxxx":
         list_volumes = volume_client.list_volumes(compartment_id=compartmentId).data
     except Exception as e:
         logging.error(f"{e.status} - {e.code} - {e.message}")
-        logging.error("Error detected. Check config and credentials. **SCRIPT STOPPED**")
+        logging.error(
+            "Error detected. Check config and credentials. **SCRIPT STOPPED**"
+        )
         sys.exit()
 
     # Sum all active block and boot volumes
@@ -114,7 +121,10 @@ if instances:
             f"{instance.shape_config.memory_in_gbs} GB | State: {instance.lifecycle_state}"
         )
         instance_names.append(instance.display_name)
-        if instance.shape == "VM.Standard.A1.Flex" and instance.lifecycle_state not in ("TERMINATING", "TERMINATED"):
+        if (
+            instance.shape == "VM.Standard.A1.Flex"
+            and instance.lifecycle_state not in ("TERMINATING", "TERMINATED")
+        ):
             active_A1_instances += 1
             total_ocpus += int(instance.shape_config.ocpus)
             total_memory += int(instance.shape_config.memory_in_gbs)
@@ -128,14 +138,20 @@ logging.info(
 
 # Free-tier resource check
 if total_ocpus + ocpus > 4 or total_memory + memory_in_gbs > 24:
-    logging.critical("Free-tier resource limit exceeded (4 OCPUs / 24 GB max). **SCRIPT STOPPED**")
+    logging.critical(
+        "Free-tier resource limit exceeded (4 OCPUs / 24 GB max). **SCRIPT STOPPED**"
+    )
     sys.exit()
 
 if displayName in instance_names:
-    logging.critical(f"Duplicate display name '{displayName}' detected. **SCRIPT STOPPED**")
+    logging.critical(
+        f"Duplicate display name '{displayName}' detected. **SCRIPT STOPPED**"
+    )
     sys.exit()
 
-logging.info(f"Precheck passed! Ready to create instance: {ocpus} ocpus, {memory_in_gbs} GB")
+logging.info(
+    f"Precheck passed! Ready to create instance: {ocpus} ocpus, {memory_in_gbs} GB"
+)
 
 # ============================ INSTANCE LAUNCH ============================ #
 
@@ -149,7 +165,7 @@ if imageId != "xxxx":
         source_details = oci.core.models.InstanceSourceViaImageDetails(
             source_type="image",
             image_id=imageId,
-            boot_volume_size_in_gbs=boot_volume_size_in_gbs
+            boot_volume_size_in_gbs=boot_volume_size_in_gbs,
         )
 elif boot_volume_id != "xxxx":
     source_details = oci.core.models.InstanceSourceViaBootVolumeDetails(
@@ -159,19 +175,62 @@ else:
     logging.critical("No image or boot volume specified. **SCRIPT STOPPED**")
     sys.exit()
 
-# Telegram status message
-if bot_token != "xxxx" and uid != "xxxx":
-    try:
-        msg = (
-            f"Cloud Account: {cloud_name}\n"
-            f"Email: {email}\n"
-            f"Number of Retry: 0\n"
-            f"Bot Status: Running\n"
-            f"Last Checked (UTC): {datetime.datetime.now(datetime.timezone.utc):%Y-%m-%d %H:%M:%S}"
-        )
-        msg_id = bot.send_message(uid, msg).id
-    except Exception:
-        msg_id = None
+# Discord status message variables
+msg_id = None
+discord_channel = None
+
+
+# Function to get IST time
+def get_ist_time():
+    ist = pytz.timezone("Asia/Kolkata")
+    return datetime.datetime.now(ist).strftime("%Y-%m-%d %I:%M:%S %p")
+
+
+# Discord bot events
+@bot.event
+async def on_ready():
+    global discord_channel, msg_id
+    logging.info(f"Discord bot logged in as {bot.user}")
+
+    if bot_token != "xxxx" and channel_id:
+        try:
+            discord_channel = bot.get_channel(channel_id)
+            if discord_channel:
+                msg = (
+                    f"Cloud Account: {cloud_name}\n"
+                    f"Email: {email}\n"
+                    f"Number of Retry: 0\n"
+                    f"Bot Status: Running\n"
+                    f"Last Checked (IST): {get_ist_time()}"
+                )
+                sent_msg = await discord_channel.send(msg)
+                msg_id = sent_msg.id
+        except Exception as e:
+            logging.error(f"Discord error: {e}")
+
+
+# Run bot in background
+import threading
+import asyncio
+
+
+def run_discord_bot():
+    if bot_token != "xxxx":
+        try:
+            bot.loop.create_task(bot.start(bot_token))
+        except Exception as e:
+            logging.error(f"Failed to start Discord bot: {e}")
+
+
+# Start Discord bot in separate thread
+if bot_token != "xxxx":
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    bot_thread = threading.Thread(
+        target=lambda: loop.run_until_complete(bot.start(bot_token)), daemon=True
+    )
+    bot_thread.start()
+    time.sleep(3)  # Give bot time to connect
 
 # ============================ RETRY LOOP ============================ #
 
@@ -193,7 +252,7 @@ while True:
             ),
             shape_config=oci.core.models.LaunchInstanceShapeConfigDetails(
                 ocpus=ocpus, memory_in_gbs=memory_in_gbs
-            )
+            ),
         )
 
         try:
@@ -209,7 +268,9 @@ while True:
                 subnet_id=subnetId, vnic_id=vnic_attachments[0].vnic_id
             ).data
             public_ip = vcn_client.get_public_ip_by_private_ip_id(
-                oci.core.models.GetPublicIpByPrivateIpIdDetails(private_ip_id=private_ips[0].id)
+                oci.core.models.GetPublicIpByPrivateIpIdDetails(
+                    private_ip_id=private_ips[0].id
+                )
             ).data.ip_address
 
             total_count += 1
@@ -218,22 +279,29 @@ while True:
                 f"Retries: {total_count}, Cloud: {cloud_name}, Email: {email}"
             )
 
-            # Telegram success message
-            if bot_token != "xxxx" and uid != "xxxx" and msg_id:
-                while True:
+            # Discord success message with @everyone ping
+            if bot_token != "xxxx" and discord_channel and msg_id:
+
+                async def send_success():
                     try:
-                        bot.delete_message(uid, msg_id)
-                        bot.send_message(
-                            uid,
+                        # Delete the status message
+                        old_msg = await discord_channel.fetch_message(msg_id)
+                        await old_msg.delete()
+
+                        # Send new success message with @everyone ping
+                        await discord_channel.send(
+                            f"@everyone\n"
                             f'"{displayName}" VPS created successfully!\n'
                             f"Cloud Account: {cloud_name}\n"
                             f"Email: {email}\n"
                             f"Number of Retry: {total_count}\n"
                             f"VPS IP: {public_ip}"
                         )
-                        break
-                    except Exception:
-                        time.sleep(5)
+                    except Exception as e:
+                        logging.error(f"Discord error: {e}")
+
+                asyncio.run_coroutine_threadsafe(send_success(), bot.loop)
+                time.sleep(2)
 
             sys.exit()
 
@@ -243,18 +311,23 @@ while True:
 
             if j_count == 10:
                 j_count = 0
-                if bot_token != "xxxx" and uid != "xxxx" and msg_id:
-                    try:
-                        msg = (
-                            f"Cloud Account: {cloud_name}\n"
-                            f"Email: {email}\n"
-                            f"Number of Retry: {total_count}\n"
-                            f"Bot Status: Running\n"
-                            f"Last Checked (UTC): {datetime.datetime.now(datetime.timezone.utc):%Y-%m-%d %H:%M:%S}"
-                        )
-                        bot.edit_message_text(msg, uid, msg_id)
-                    except Exception:
-                        pass
+                if bot_token != "xxxx" and discord_channel and msg_id:
+
+                    async def update_status():
+                        try:
+                            msg = (
+                                f"Cloud Account: {cloud_name}\n"
+                                f"Email: {email}\n"
+                                f"Number of Retry: {total_count}\n"
+                                f"Bot Status: Running\n"
+                                f"Last Checked (IST): {get_ist_time()}"
+                            )
+                            old_msg = await discord_channel.fetch_message(msg_id)
+                            await old_msg.edit(content=msg)
+                        except Exception:
+                            pass
+
+                    asyncio.run_coroutine_threadsafe(update_status(), bot.loop)
 
             # Handle throttling and other errors
             if e.status == 429:
@@ -282,20 +355,27 @@ while True:
             j_count += 1
             if j_count == 10:
                 j_count = 0
-                if bot_token != "xxxx" and uid != "xxxx" and msg_id:
-                    try:
-                        msg = (
-                            f"Cloud Account: {cloud_name}\n"
-                            f"Email: {email}\n"
-                            f"Number of Retry: {total_count}\n"
-                            f"Bot Status: Running\n"
-                            f"Last Checked (UTC): {datetime.datetime.now(datetime.timezone.utc):%Y-%m-%d %H:%M:%S}"
-                        )
-                        bot.edit_message_text(msg, uid, msg_id)
-                    except Exception:
-                        pass
+                if bot_token != "xxxx" and discord_channel and msg_id:
 
-            logging.info(f"{e}. Retrying after {wait_s_for_retry}s. Retry count: {total_count}")
+                    async def update_status():
+                        try:
+                            msg = (
+                                f"Cloud Account: {cloud_name}\n"
+                                f"Email: {email}\n"
+                                f"Number of Retry: {total_count}\n"
+                                f"Bot Status: Running\n"
+                                f"Last Checked (IST): {get_ist_time()}"
+                            )
+                            old_msg = await discord_channel.fetch_message(msg_id)
+                            await old_msg.edit(content=msg)
+                        except Exception:
+                            pass
+
+                    asyncio.run_coroutine_threadsafe(update_status(), bot.loop)
+
+            logging.info(
+                f"{e}. Retrying after {wait_s_for_retry}s. Retry count: {total_count}"
+            )
             time.sleep(wait_s_for_retry)
 
         except KeyboardInterrupt:
